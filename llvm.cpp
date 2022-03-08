@@ -127,7 +127,7 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
         else if (var->dtype->getType() == ast::TypeEnum::INT ||
                  var->dtype->getType() == ast::TypeEnum::REAL ||
                  var->dtype->getType() == ast::TypeEnum::BOOL) {
-            if(var->iv) { // iv is given, deduce dtype 
+            if(var->initial_value) { // initial value is given, deduce dtype 
                 goto deduce;
             }
             else {
@@ -145,7 +145,7 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
     // dtype is not given, deduce dtype from iv
     else {
         deduce:
-        var->iv->accept(this);
+        var->initial_value->accept(this);
         dtype = pop_t();
         
         if(!dtype) {
@@ -162,7 +162,7 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
         g->setLinkage(llvm::GlobalValue::ExternalLinkage);
 
         // global is not initialized, initialize it with default value
-        if(!(var->iv)) {
+        if(!(var->initial_value)) {
             if(dtype == int_t) {
                 g->setInitializer(llvm::ConstantInt::get(context, llvm::APInt(64, 0, true)));
             }
@@ -179,7 +179,7 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
 
         // global is initialized, set initializer for it.
         else {
-            var->iv->accept(this);
+            var->initial_value->accept(this);
             if(dtype == int_t || dtype == bool_t) {
                 if (auto init = llvm::dyn_cast<llvm::ConstantInt>(pop_v())) {
                     g->setInitializer(init);
@@ -209,8 +209,8 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
         auto p = builder->CreateAlloca(dtype, nullptr, var->name);
 
         // If an initial value was given, store it in the allocated space. 
-        if (var->iv) {
-            var->iv->accept(this);
+        if (var->initial_value) {
+            var->initial_value->accept(this);
             builder->CreateStore(pop_v(), p);
         }
         
