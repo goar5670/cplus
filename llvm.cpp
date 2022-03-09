@@ -77,6 +77,36 @@ llvm::Type *IRGenerator::pop_t() {
     return t;
 }
 
+// handles primitive casting for AssignmentStatement and VariableDeclaration
+llvm::Value* IRGenerator::castPrimitive(llvm::Value* value, llvm::Type* explicit_type, llvm::Type* implicit_type) {
+    if(explicit_type == implicit_type)
+        return value;
+    if(explicit_type == int_t && implicit_type == real_t) { // real -> int
+        return builder->CreateFPToSI(value, explicit_type, "intcast");
+    }
+    else if(explicit_type == bool_t && implicit_type == real_t) { // real -> bool
+        return builder->CreateFPToSI(value, explicit_type, "boolcast");
+    }
+    else if(explicit_type == real_t && implicit_type == int_t) { // int -> real
+        return builder->CreateSIToFP(value, explicit_type, "fpcast");
+    }
+    else if(explicit_type == bool_t && implicit_type == int_t) { // int -> bool
+        return builder->CreateICmpNE(value, llvm::ConstantInt::get(context, llvm::APInt(64, 0)), "boolcast");
+    }
+    else if(explicit_type == int_t && implicit_type == bool_t) { // bool -> int
+        return builder->CreateIntCast(value, explicit_type, false);
+    }
+    else if(explicit_type == real_t && implicit_type == bool_t) { // bool -> real
+        return builder->CreateFPCast(value, explicit_type);
+    }
+    std::cerr << RED << "[LLVM]: [ERROR]: Unsupported conversion: ";
+    explicit_type->print(llvm::errs());
+    std::cerr << " -> ";
+    implicit_type->print(llvm::errs());
+    std::cerr << std::endl;
+    std::exit(1);
+}
+
 void IRGenerator::visit(ast::Program *program) {
     BLOCK_B("Program")
 
@@ -134,36 +164,7 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
             if(var->initial_value) {
                 var->initial_value->accept(this);
                 initial_value = pop_v();
-
-                auto lhs_t = dtype;
-                auto rhs_t = initial_value->getType();
-
-                if(lhs_t == int_t && rhs_t == real_t) { // real -> int
-                    initial_value = builder->CreateFPToSI(initial_value, lhs_t, "intcast");
-                }
-                else if(lhs_t == bool_t && rhs_t == real_t) { // real -> bool
-                    initial_value = builder->CreateFPToSI(initial_value, lhs_t, "boolcast");
-                }
-                else if(lhs_t == real_t && rhs_t == int_t) { // int -> real
-                    initial_value = builder->CreateSIToFP(initial_value, lhs_t, "fpcast");
-                }
-                else if(lhs_t == bool_t && rhs_t == int_t) { // int -> bool
-                    initial_value = builder->CreateICmpNE(initial_value, llvm::ConstantInt::get(context, llvm::APInt(64, 0)), "boolcast");
-                }
-                else if(lhs_t == int_t && rhs_t == bool_t) { // bool -> int
-                    initial_value = builder->CreateIntCast(initial_value, lhs_t, false);
-                }
-                else if(lhs_t == real_t && rhs_t == bool_t) { // bool -> real
-                    initial_value = builder->CreateFPCast(initial_value, lhs_t);
-                }
-                else if(lhs_t != rhs_t) {
-                    std::cerr << RED << "[LLVM]: [ERROR]: Unsupported conversion: ";
-                    lhs_t->print(llvm::errs());
-                    std::cerr << " -> ";
-                    rhs_t->print(llvm::errs());
-                    std::cerr << std::endl;
-                    std::exit(1);
-                }
+                initial_value = castPrimitive(initial_value, dtype, initial_value->getType());
             }   
         }
 
@@ -686,35 +687,7 @@ void IRGenerator::visit(ast::AssignmentStatement *stmt) {
     stmt->exp->accept(this);
     auto exp = pop_v();
 
-    auto lhs_t = builder->CreateLoad(id_loc)->getType();
-    auto rhs_t = exp->getType();
-
-    if(lhs_t == int_t && rhs_t == real_t) { // real -> int
-        exp = builder->CreateFPToSI(exp, lhs_t, "intcast");
-    }
-    else if(lhs_t == bool_t && rhs_t == real_t) { // real -> bool
-        exp = builder->CreateFPToSI(exp, lhs_t, "boolcast");
-    }
-    else if(lhs_t == real_t && rhs_t == int_t) { // int -> real
-        exp = builder->CreateSIToFP(exp, lhs_t, "fpcast");
-    }
-    else if(lhs_t == bool_t && rhs_t == int_t) { // int -> bool
-        exp = builder->CreateICmpNE(exp, llvm::ConstantInt::get(context, llvm::APInt(64, 0)), "boolcast");
-    }
-    else if(lhs_t == int_t && rhs_t == bool_t) { // bool -> int
-        exp = builder->CreateIntCast(exp, lhs_t, false);
-    }
-    else if(lhs_t == real_t && rhs_t == bool_t) { // bool -> real
-        exp = builder->CreateFPCast(exp, lhs_t);
-    }
-    else if(lhs_t != rhs_t) {
-        std::cerr << RED << "[LLVM]: [ERROR]: Unsupported conversion: ";
-        lhs_t->print(llvm::errs());
-        std::cerr << " -> ";
-        rhs_t->print(llvm::errs());
-        std::cerr << std::endl;
-        std::exit(1);
-    }
+    exp = castPrimitive(exp, builder->CreateLoad(id_loc)->getType(), exp->getType());
     
     builder->CreateStore(exp, id_loc);
 
