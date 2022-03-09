@@ -101,6 +101,7 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
     BLOCK_B("VariableDeclaration")
 
     llvm::Type *dtype = nullptr;
+    llvm::Value* initial_value = nullptr;
 
     // var dtype is given
     if (var->dtype) {
@@ -127,13 +128,43 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
         else if (var->dtype->getType() == ast::TypeEnum::INT ||
                  var->dtype->getType() == ast::TypeEnum::REAL ||
                  var->dtype->getType() == ast::TypeEnum::BOOL) {
-            if(var->initial_value) { // initial value is given, deduce dtype 
-                goto deduce;
-            }
-            else {
-                var->dtype->accept(this);
-                dtype = pop_t();
-            }
+            var->dtype->accept(this);
+            dtype = pop_t();
+
+            if(var->initial_value) {
+                var->initial_value->accept(this);
+                initial_value = pop_v();
+
+                auto lhs_t = dtype;
+                auto rhs_t = initial_value->getType();
+
+                if(lhs_t == int_t && rhs_t == real_t) { // real -> int
+                    initial_value = builder->CreateFPToSI(initial_value, lhs_t, "intcast");
+                }
+                else if(lhs_t == bool_t && rhs_t == real_t) { // real -> bool
+                    initial_value = builder->CreateFPToSI(initial_value, lhs_t, "boolcast");
+                }
+                else if(lhs_t == real_t && rhs_t == int_t) { // int -> real
+                    initial_value = builder->CreateSIToFP(initial_value, lhs_t, "fpcast");
+                }
+                else if(lhs_t == bool_t && rhs_t == int_t) { // int -> bool
+                    initial_value = builder->CreateICmpNE(initial_value, llvm::ConstantInt::get(context, llvm::APInt(64, 0)), "boolcast");
+                }
+                else if(lhs_t == int_t && rhs_t == bool_t) { // bool -> int
+                    initial_value = builder->CreateIntCast(initial_value, lhs_t, false);
+                }
+                else if(lhs_t == real_t && rhs_t == bool_t) { // bool -> real
+                    initial_value = builder->CreateFPCast(initial_value, lhs_t);
+                }
+                else if(lhs_t != rhs_t) {
+                    std::cerr << RED << "[LLVM]: [ERROR]: Unsupported conversion: ";
+                    lhs_t->print(llvm::errs());
+                    std::cerr << " -> ";
+                    rhs_t->print(llvm::errs());
+                    std::cerr << std::endl;
+                    std::exit(1);
+                }
+            }   
         }
 
         // unknown dtype
@@ -142,10 +173,11 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
         }
     }
 
-    // dtype is not given, deduce dtype from iv
+    // dtype is not given, deduce dtype from initial value
     else {
-        deduce:
+        // deduce:
         var->initial_value->accept(this);
+        initial_value = pop_v();
         dtype = pop_t();
         
         if(!dtype) {
@@ -162,7 +194,7 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
         g->setLinkage(llvm::GlobalValue::ExternalLinkage);
 
         // global is not initialized, initialize it with default value
-        if(!(var->initial_value)) {
+        if(!(initial_value)) {
             if(dtype == int_t) {
                 g->setInitializer(llvm::ConstantInt::get(context, llvm::APInt(64, 0, true)));
             }
@@ -179,9 +211,8 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
 
         // global is initialized, set initializer for it.
         else {
-            var->initial_value->accept(this);
             if(dtype == int_t || dtype == bool_t) {
-                if (auto init = llvm::dyn_cast<llvm::ConstantInt>(pop_v())) {
+                if (auto init = llvm::dyn_cast<llvm::ConstantInt>(initial_value)) {
                     g->setInitializer(init);
                 }
                 else {
@@ -189,7 +220,7 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
                 }
             }
             else if(dtype == real_t) {
-                if (auto init = llvm::dyn_cast<llvm::ConstantFP>(pop_v())) {
+                if (auto init = llvm::dyn_cast<llvm::ConstantFP>(initial_value)) {
                     g->setInitializer(init);
                 }
                 else {
@@ -209,9 +240,8 @@ void IRGenerator::visit(ast::VariableDeclaration *var) {
         auto p = builder->CreateAlloca(dtype, nullptr, var->name);
 
         // If an initial value was given, store it in the allocated space. 
-        if (var->initial_value) {
-            var->initial_value->accept(this);
-            builder->CreateStore(pop_v(), p);
+        if (initial_value) {
+            builder->CreateStore(initial_value, p);
         }
         
         // Save var location for later reference
